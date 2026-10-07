@@ -1,5 +1,7 @@
-# Build
+# NoMount
 
-This repository contains build configuration and entry workflows only.
+An Android kernel module with a companion management interface.
 
-Build steps and dependencies are fetched from pinned, read-only inputs and run on this repository's runners.
+Requires a compatible kernel and a supported root environment. Do not mix components from different packages.
+
+Author: zaomi
