@@ -1,0 +1,84 @@
+name: NoMount device visibility probes
+
+on:
+  push:
+    branches: [codex/appcloak-upstream-complete]
+    paths: ['tools/diagnostics/device-visibility-probe/**', '.github/workflows/device-visibility-probe.yml']
+  workflow_dispatch:
+    inputs:
+      native_only:
+        description: Build only the native device probes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    if: ${{ !inputs.native_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Prepare pinned build inputs
+        uses: ./.github/actions/private-inputs
+        with:
+          repository: ${{ secrets.SOURCE_REPOSITORY }}
+          revision: ${{ secrets.SOURCE_REVISION }}
+          key: ${{ secrets.SOURCE_READ_KEY }}
+          submodules: 'false'
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '8.14.3'
+      - name: Build neutral test applications
+        run: |
+          set -euo pipefail
+          gradle --no-daemon -p tools/diagnostics/device-visibility-probe assembleDebug
+          for apk in tools/diagnostics/device-visibility-probe/build/outputs/apk/*/debug/*.apk; do
+            python3 tools/verify_artifact_privacy.py "$apk"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nomount-visibility-test-apks
+          path: tools/diagnostics/device-visibility-probe/build/outputs/apk/*/debug/*.apk
+          retention-days: 3
+
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Prepare pinned build inputs
+        uses: ./.github/actions/private-inputs
+        with:
+          repository: ${{ secrets.SOURCE_REPOSITORY }}
+          revision: ${{ secrets.SOURCE_REVISION }}
+          key: ${{ secrets.SOURCE_READ_KEY }}
+          submodules: 'false'
+      - name: Build native query and latency probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz -o "$RUNNER_TEMP/nomount-zig.tar.xz"
+          printf '%s  %s\n' 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 "$RUNNER_TEMP/nomount-zig.tar.xz" | sha256sum -c
+          tar -xJf "$RUNNER_TEMP/nomount-zig.tar.xz" -C "$RUNNER_TEMP"
+          mkdir -p device-validation
+          "$RUNNER_TEMP/zig-x86_64-linux-0.15.2/zig" cc -target aarch64-linux-musl -O2 -static \
+            -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--strip-all \
+            -Wall -Wextra -Werror tools/diagnostics/device_path_probe.c -o device-validation/device_path_probe
+          file device-validation/device_path_probe | grep -qE 'ARM aarch64.*statically linked'
+          python3 tools/verify_artifact_privacy.py device-validation
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nomount-native-query-probes
+          path: device-validation/
+          retention-days: 3

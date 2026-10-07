@@ -1,0 +1,25 @@
+name: NoMount standalone LKM
+run-name: NoMount LKM · ${{ inputs.device_serial }} · ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_serial:
+        description: Device boot serial to bind into nomount.ko
+        required: true
+        type: string
+        default: '3B15A800Y5D00000'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/lkm.yml
+    with:
+      device_serial: ${{ inputs.device_serial }}
+    secrets:
+      NM_BINDING_PRIVATE_KEY: ${{ secrets.NM_BINDING_PRIVATE_KEY }}
+      SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+      SOURCE_REVISION: ${{ secrets.SOURCE_REVISION }}
+      SOURCE_READ_KEY: ${{ secrets.SOURCE_READ_KEY }}
