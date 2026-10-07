@@ -1,55 +1,39 @@
 name: NoMount AppCloak regression
-
-on:
+'on':
   push:
-    branches: [experiment/appcloak-hma173-20261002, codex/appcloak-upstream-complete]
-    paths: ['appcloak/**', 'external/**', '.gitmodules', 'module/**', 'kernel/**', 'tests/**', 'tools/generate_binding.py', 'tools/diagnostics/HookRuntimeProbe.java', '.github/workflows/lkm*.yml', '.github/workflows/appcloak-regression.yml']
-  workflow_dispatch:
-
+    branches:
+    - experiment/appcloak-hma173-20261002
+    - codex/appcloak-upstream-complete
+    paths:
+    - appcloak/**
+    - external/**
+    - .gitmodules
+    - module/**
+    - kernel/**
+    - tests/**
+    - tools/generate_binding.py
+    - tools/diagnostics/HookRuntimeProbe.java
+    - .github/workflows/lkm*.yml
+    - .github/workflows/appcloak-regression.yml
+  workflow_dispatch: null
 permissions:
   contents: read
-
 jobs:
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: true
-          persist-credentials: false
-      - name: Prepare pinned build inputs
-        uses: ./.github/actions/private-inputs
-        with:
-          repository: ${{ secrets.SOURCE_REPOSITORY }}
-          revision: ${{ secrets.SOURCE_REVISION }}
-          key: ${{ secrets.SOURCE_READ_KEY }}
-          submodules: 'true'
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Verify existing kernel contracts and Android rules
-        env:
-          NM_REQUIRE_JAVA_TESTS: '1'
-          NM_REQUIRE_C_TESTS: '1'
-        run: |
-          python3 -m unittest discover -s tests -p 'test_lkm*.py' -v
-          python3 -m unittest discover -s tests -p 'test_appcloak*.py' -v
-          python3 -m unittest discover -s tests -p test_policy_reload.py -v
-          python3 -m unittest discover -s tests -p test_settings_inheritance.py -v
-          python3 -m unittest discover -s tests -p test_uid_live.py -v
-          python3 -m unittest discover -s tests -p test_webui.py -v
-          python3 -m unittest discover -s tests -p test_control_build.py -v
-          python3 -m unittest discover -s tests -p test_serial_workflow.py -v
-      - uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '8.14.3'
-      - name: Compile the Android backend without a device package
-        shell: bash
-        run: |
-          set -euo pipefail
-          export NM_BINDING_ID="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
-          export NM_DIAGNOSTIC_STAGE=off
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > appcloak/local.properties
-          gradle --no-daemon -p appcloak :app:assembleRelease
+    - uses: actions/checkout@v6
+      with:
+        submodules: true
+        persist-credentials: false
+    - name: Prepare pinned build inputs
+      uses: ./.github/actions/private-inputs
+      with:
+        repository: ${{ secrets.SOURCE_REPOSITORY }}
+        revision: ${{ secrets.SOURCE_REVISION }}
+        key: ${{ secrets.SOURCE_READ_KEY }}
+        submodules: 'true'
+    - name: Run private build pipeline
+      id: pipeline
+      uses: ./ci/actions/appcloak-regression/backend

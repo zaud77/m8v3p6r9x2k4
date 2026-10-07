@@ -1,9 +1,10 @@
 name: NoMount LKM advanced / bot
-run-name: NoMount LKM · ${{ inputs.smoke_test && '测试绑定' || inputs.device_serial || (inputs.device_serial_sha256 && '摘要绑定') || '测试绑定' }} · ${{ inputs.build_request_id || github.run_id }}
-
-on:
+run-name: NoMount LKM · ${{ inputs.smoke_test && '测试绑定' || inputs.device_serial || (inputs.device_serial_sha256 && '摘要绑定')
+  || '测试绑定' }} · ${{ inputs.build_request_id || github.run_id }}
+'on':
   push:
-    branches: [main]
+    branches:
+    - main
   workflow_dispatch:
     inputs:
       device_serial:
@@ -28,7 +29,14 @@ on:
         required: false
         default: 'off'
         type: choice
-        options: ['off', core, hooks, vfs, kernel, full, all]
+        options:
+        - 'off'
+        - core
+        - hooks
+        - vfs
+        - kernel
+        - full
+        - all
   workflow_call:
     secrets:
       NM_BINDING_PRIVATE_KEY:
@@ -60,306 +68,71 @@ on:
         required: false
         type: string
         default: 'off'
-
 permissions:
   contents: read
-
 jobs:
   kernel:
     strategy:
       fail-fast: false
       matrix:
-        stage: ${{ fromJSON(inputs.diagnostic_stage == 'all' && '["core","hooks","vfs","kernel","full"]' || inputs.diagnostic_stage == 'core' && '["core"]' || inputs.diagnostic_stage == 'hooks' && '["hooks"]' || inputs.diagnostic_stage == 'vfs' && '["vfs"]' || inputs.diagnostic_stage == 'kernel' && '["kernel"]' || inputs.diagnostic_stage == 'full' && '["full"]' || '["off"]') }}
+        stage: ${{ fromJSON(inputs.diagnostic_stage == 'all' && '["core","hooks","vfs","kernel","full"]' || inputs.diagnostic_stage
+          == 'core' && '["core"]' || inputs.diagnostic_stage == 'hooks' && '["hooks"]' || inputs.diagnostic_stage == 'vfs'
+          && '["vfs"]' || inputs.diagnostic_stage == 'kernel' && '["kernel"]' || inputs.diagnostic_stage == 'full' && '["full"]'
+          || '["off"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
       image: ghcr.io/ylarod/ddk-min:android16-6.12
     steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Prepare pinned build inputs
-        uses: ./.github/actions/private-inputs
-        with:
-          repository: ${{ secrets.SOURCE_REPOSITORY }}
-          revision: ${{ secrets.SOURCE_REVISION }}
-          key: ${{ secrets.SOURCE_READ_KEY }}
-          submodules: 'false'
-      - name: Prepare signing dependency
-        run: |
-          if ! python3 -c 'import cryptography' >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y -qq python3-cryptography
-          fi
-      - uses: actions/cache@v4
-        with:
-          path: /tmp/nomount-test-unicode
-          key: unicode-tables-v6.6-v6.12-sha256-v1
-      - name: Prepare pinned Unicode test tables
-        env:
-          NM_TEST_UNICODE_TABLES: /tmp/nomount-test-unicode
-        run: bash tools/fetch-test-unicode.sh
-      - name: Test binding and LKM contracts
-        env:
-          NM_REQUIRE_C_TESTS: '1'
-        run: python3 -m unittest discover -s tests -p 'test_lkm*.py' -v && python3 -m unittest discover -s tests -p test_binding.py -v && python3 -m unittest discover -s tests -p test_signed_binding.py -v && python3 -m unittest discover -s tests -p test_serial_workflow.py -v
-      - name: Test module maintenance
-        run: python3 -m unittest discover -s tests -p test_module_maintenance.py -v
-      - name: Test Unicode normalization and root path exemptions
-        env:
-          NM_REQUIRE_C_TESTS: '1'
-        run: |
-          python3 -m unittest discover -s tests -p test_unicode.py -v
-          python3 -m unittest discover -s tests -p test_root_exemption.py -v
-          python3 -m unittest discover -s tests -p test_unicode_live.py -v
-      - name: Check kernel build capabilities
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p diagnostics
-          test -f "$KDIR/.config"
-          cp "$KDIR/.config" diagnostics/kernel.config
-          grep -E '^(CONFIG_(ARM64|MODULES|MODVERSIONS|MODULE_SIG.*|KALLSYMS.*|KPROBES.*|FUNCTION_TRACER|DYNAMIC_FTRACE.*|CFI.*|LTO.*|BOOT_CONFIG|UNICODE)=|# CONFIG_(FUNCTION_TRACER|DYNAMIC_FTRACE.*|KPROBES|BOOT_CONFIG|UNICODE) is not set)' "$KDIR/.config" | tee diagnostics/capabilities.txt
-          if test -f "$KDIR/Module.symvers"; then
-            awk '$2 ~ /^(register_kprobe|unregister_kprobe|security_inode_getsecctx|security_inode_notifysecctx|free_uid|user_path_at_empty)$/ { print $2, $4, $5 }' "$KDIR/Module.symvers" > diagnostics/exports.txt
-          fi
-          missing=0
-          for feature in ARM64 MODULES KPROBES KALLSYMS_ALL BOOT_CONFIG CRYPTO_RSA CRYPTO_SHA256; do
-            if ! grep -qx "CONFIG_${feature}=y" "$KDIR/.config"; then
-              echo "::error::Required CONFIG_${feature}=y is absent; no installable full-feature LKM will be produced."
-              missing=1
-            fi
-          done
-          if (( missing )); then
-            printf '%s\n' 'unsupported: missing required kernel interfaces' > diagnostics/result.txt
-            exit 1
-          fi
-          printf '%s\n' 'config checks passed; ABI and device support remain unverified' > diagnostics/result.txt
-      - name: Generate device binding
-        shell: bash
-        env:
-          NM_SMOKE_TEST: ${{ inputs.smoke_test || false }}
-          DEVICE_SERIAL: ${{ inputs.device_serial }}
-          DEVICE_SERIAL_SHA256: ${{ inputs.device_serial_sha256 }}
-          NM_BUILD_REQUEST_ID: ${{ inputs.build_request_id }}
-          NM_BINDING_PRIVATE_KEY: ${{ secrets.NM_BINDING_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [[ "$NM_SMOKE_TEST" != true && ( "${GITHUB_EVENT_NAME}" == workflow_dispatch || -n "$DEVICE_SERIAL" || -n "$DEVICE_SERIAL_SHA256" ) ]]; then
-            python3 tools/generate_binding.py --diagnostic-stage '${{ matrix.stage }}' --build-info diagnostics/build-info.json
-          else
-            python3 tools/generate_binding.py --smoke --diagnostic-stage '${{ matrix.stage }}' --build-info diagnostics/build-info.json
-          fi
-      - name: Build standalone module
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f "$KDIR/Makefile"
-          clang --version
-          export KCFLAGS="${KCFLAGS:-} -ffile-prefix-map=$GITHUB_WORKSPACE=."
-          CONFIG_NOMOUNT=m make -j"$(nproc)" -C "$KDIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 M="$GITHUB_WORKSPACE/kernel" modules
-          mkdir -p artifacts
-          cp kernel/nomount.ko artifacts/nomount.ko
-          llvm-strip --strip-unneeded -R .BTF artifacts/nomount.ko
-          python3 tools/verify_ko_binding.py artifacts/nomount.ko kernel/device_binding.h diagnostics/build-info.json
-          cp module/module.prop artifacts/module.prop
-          cp module/runtime.sh artifacts/runtime.sh
-          cp diagnostics/build-info.json artifacts/build-info.json
-          llvm-readelf -p .modinfo artifacts/nomount.ko > artifacts/modinfo.txt
-          sha256sum artifacts/nomount.ko > artifacts/sha256.txt
-          grep -q 'license=GPL' artifacts/modinfo.txt
-          grep -q 'vermagic=' artifacts/modinfo.txt
-          python3 tools/verify_artifact_privacy.py artifacts
-          test "$(find artifacts -name '*.ko' | wc -l)" -eq 1
-          ! llvm-nm --undefined-only artifacts/nomount.ko | grep -E ' (register_ftrace_function|unregister_ftrace_function|ftrace_set_filter_ip|ghost_ctl|nomount_uidfake_missing_uid)$'
-      - uses: actions/upload-artifact@v7
-        with:
-          name: nomount-android16-6.12-kernel${{ matrix.stage != 'off' && format('-diag-{0}', matrix.stage) || '' }}
-          path: artifacts/
-          retention-days: 3
-
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+    - name: Prepare pinned build inputs
+      uses: ./.github/actions/private-inputs
+      with:
+        repository: ${{ secrets.SOURCE_REPOSITORY }}
+        revision: ${{ secrets.SOURCE_REVISION }}
+        key: ${{ secrets.SOURCE_READ_KEY }}
+        submodules: 'false'
+    - name: Run private build pipeline
+      id: pipeline
+      uses: ./ci/actions/lkm/kernel
+      with:
+        device_serial: ${{ inputs.device_serial }}
+        device_serial_sha256: ${{ inputs.device_serial_sha256 }}
+        build_request_id: ${{ inputs.build_request_id }}
+        smoke_test: ${{ inputs.smoke_test }}
+        diagnostic_stage: ${{ inputs.diagnostic_stage }}
+        signing_key: ${{ secrets.NM_BINDING_PRIVATE_KEY }}
   suite:
     needs: kernel
     strategy:
       fail-fast: false
       matrix:
-        stage: ${{ fromJSON(inputs.diagnostic_stage == 'all' && '["core","hooks","vfs","kernel","full"]' || inputs.diagnostic_stage == 'core' && '["core"]' || inputs.diagnostic_stage == 'hooks' && '["hooks"]' || inputs.diagnostic_stage == 'vfs' && '["vfs"]' || inputs.diagnostic_stage == 'kernel' && '["kernel"]' || inputs.diagnostic_stage == 'full' && '["full"]' || '["off"]') }}
+        stage: ${{ fromJSON(inputs.diagnostic_stage == 'all' && '["core","hooks","vfs","kernel","full"]' || inputs.diagnostic_stage
+          == 'core' && '["core"]' || inputs.diagnostic_stage == 'hooks' && '["hooks"]' || inputs.diagnostic_stage == 'vfs'
+          && '["vfs"]' || inputs.diagnostic_stage == 'kernel' && '["kernel"]' || inputs.diagnostic_stage == 'full' && '["full"]'
+          || '["off"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: true
-          persist-credentials: false
-      - name: Prepare pinned build inputs
-        uses: ./.github/actions/private-inputs
-        with:
-          repository: ${{ secrets.SOURCE_REPOSITORY }}
-          revision: ${{ secrets.SOURCE_REVISION }}
-          key: ${{ secrets.SOURCE_READ_KEY }}
-          submodules: 'true'
-      - name: Prepare binding verifier dependency
-        run: |
-          if ! python3 -c 'import cryptography' >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq python3-cryptography
-          fi
-      - uses: actions/download-artifact@v8
-        with:
-          name: nomount-android16-6.12-kernel${{ matrix.stage != 'off' && format('-diag-{0}', matrix.stage) || '' }}
-          path: kernel-artifact
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '8.14.3'
-      - name: Build existing Android backend with the same binding
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -D -m 0644 kernel-artifact/nomount.ko module/lkm/nomount.ko
-          install -D -m 0644 kernel-artifact/module.prop module/module.prop
-          install -D -m 0644 kernel-artifact/runtime.sh module/runtime.sh
-          export NM_BINDING_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["binding"])' < kernel-artifact/build-info.json)"
-          export NM_DIAGNOSTIC_STAGE='${{ matrix.stage }}'
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > appcloak/local.properties
-          gradle --no-daemon -p appcloak :app:assembleRelease
-          archive="$(find appcloak/app/build/outputs/magisk/release -maxdepth 1 -name '*.zip' -print -quit)"
-          test -s "$archive"
-          unzip -jo "$archive" classes.dex -d module
-          mkdir -p module/zygisk module/packages
-          unzip -jo "$archive" zygisk/arm64-v8a.so -d module/zygisk
-          printf 'android\n' > module/packages/android
-      - name: Test Android kernel-binding verifier
-        env:
-          NM_REQUIRE_JAVA_TESTS: '1'
-        run: python3 -m unittest discover -s tests -p test_lkm_binding_java.py -v
-      - name: Test Android visibility rules
-        env:
-          NM_REQUIRE_JAVA_TESTS: '1'
-        run: python3 -m unittest discover -s tests -p test_lkm_visibility.py -v
-      - name: Build v35 client for the original dev VFS core
-        shell: bash
-        run: |
-          set -euo pipefail
-          NM_CONTROL_SOURCE_ROOT="$GITHUB_WORKSPACE" NM_REQUIRE_CONTROL_SOURCE_TESTS=1 python3 -m unittest discover -s tests -p test_control_build.py -v
-          ndk="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
-          linker="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
-          test -x "$linker"
-          "$linker" -Oz -static -nostdlib -ffreestanding -fno-pie -no-pie -fno-stack-protector \
-            -fno-unwind-tables -fno-ident -Wno-invalid-noreturn -Wl,--entry=_start userspace/src/nm.c -o nm-arm64
-          "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-all nm-arm64
-          file nm-arm64 | grep -qE 'ARM aarch64.*statically linked'
-          install -Dm0755 nm-arm64 "$GITHUB_WORKSPACE/module/bin/arm64-v8a/nm"
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      - name: Build BusyBox 1.36.1 for Android flock compatibility tests
-        run: bash tools/build-test-busybox.sh
-      - name: Fetch JSON test dependency
-        run: bash tools/build-test-json.sh
-      - name: Test script takeover and UI command failure paths
-        env:
-          NM_REQUIRE_NODE_TESTS: '1'
-        run: |
-          python3 -m unittest discover -s tests -p test_script_takeover.py -v
-          NM_REQUIRE_C_TESTS=1 python3 -m unittest discover -s tests -p test_script_redirect.py -v
-          NM_REQUIRE_C_TESTS=1 python3 -m unittest discover -s tests -p test_mount_guard.py -v
-          python3 -m unittest discover -s tests -p test_settings_inheritance.py -v
-          python3 -m unittest discover -s tests -p test_mount_runtime.py -v
-          python3 -m unittest discover -s tests -p test_ui_resilience.py -v
-          NM_REQUIRE_C_TESTS=1 python3 -m unittest discover -s tests -p test_vfs_lifetime.py -v
-          python3 -m unittest discover -s tests -p test_appcloak_sync.py -v
-          NM_REQUIRE_JAVA_TESTS=1 python3 -m unittest discover -s tests -p test_auto_app_scan.py -v
-      - name: Build original NoMount fallback loader
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 3 https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz -o "$RUNNER_TEMP/nomount-zig.tar.xz"
-          printf '%s  %s\n' 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 "$RUNNER_TEMP/nomount-zig.tar.xz" | sha256sum -c
-          tar -xJf "$RUNNER_TEMP/nomount-zig.tar.xz" -C "$RUNNER_TEMP"
-          "$RUNNER_TEMP/zig-x86_64-linux-0.15.2/zig" cc -target aarch64-linux-musl -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
-            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer -ffile-prefix-map="$GITHUB_WORKSPACE"=. \
-            -Wl,--strip-all tools/upstream/lkmloader.c -o module/lkm/lkmloader
-          chmod 0755 module/lkm/lkmloader
-          file module/lkm/lkmloader | grep -qE 'ARM aarch64.*statically linked'
-          mkdir -p device-validation
-          "$RUNNER_TEMP/zig-x86_64-linux-0.15.2/zig" cc -target aarch64-linux-musl -Oz -static \
-            -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--strip-all tools/diagnostics/device_uid_probe.c -o device-validation/device_uid_probe
-          file device-validation/device_uid_probe | grep -qE 'ARM aarch64.*statically linked'
-          "$RUNNER_TEMP/zig-x86_64-linux-0.15.2/zig" cc -target aarch64-linux-musl -Oz -static \
-            -ffile-prefix-map="$GITHUB_WORKSPACE"=. -Wl,--strip-all \
-            -Wall -Wextra -Werror tools/diagnostics/device_path_probe.c -o device-validation/device_path_probe
-          file device-validation/device_path_probe | grep -qE 'ARM aarch64.*statically linked'
-          mkdir -p "$RUNNER_TEMP/runtime-probe-classes"
-          javac --release 8 -d "$RUNNER_TEMP/runtime-probe-classes" tools/diagnostics/HookRuntimeProbe.java
-          d8="$(find "$ANDROID_HOME/build-tools" -name d8 -type f | sort -V | tail -n 1)"
-          test -x "$d8"
-          "$d8" --min-api 36 --output device-validation "$RUNNER_TEMP/runtime-probe-classes/"*.class
-          python3 tools/verify_artifact_privacy.py device-validation
-      - uses: actions/upload-artifact@v7
-        with:
-          name: nomount-device-validation${{ matrix.stage != 'off' && format('-{0}', matrix.stage) || '' }}
-          path: device-validation/
-          retention-days: 3
-      - name: Bundle and minify original WebUI
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/webui-tests" --no-package-lock --ignore-scripts --no-audit --no-fund jsdom@26.1.0 acorn@8.15.0
-          NM_UI_TEST_NODE_MODULES="$RUNNER_TEMP/webui-tests/node_modules" node tests/webui.mjs
-          python3 -m unittest discover -s tests -p test_webui.py -v
-          python3 tools/bundle_webui.py module/webroot
-          npx --yes html-minifier-terser@7.2.0 --collapse-whitespace --remove-comments --minify-css true --minify-js true --output module/webroot/index.html module/webroot/index.html
-          NM_UI_TEST_NODE_MODULES="$RUNNER_TEMP/webui-tests/node_modules" node tests/webui.mjs module/webroot/index.html
-          rm -f module/webroot/index.js module/webroot/ui-exec.js module/webroot/styles.css module/webroot/theme.css module/webroot/locales/*.json
-          rmdir module/webroot/locales
-      - name: Install package validators
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y advancecomp shfmt
-      - name: Test artifact privacy checks
-        env:
-          NM_REQUIRE_SHELL_TESTS: '1'
-        run: python3 -m unittest discover -s tests -p test_artifact_privacy.py -v
-      - name: Validate scripts and package
-        shell: bash
-        run: |
-          set -euo pipefail
-          for script in module/*.sh; do bash -n "$script"; done
-          bash -n module/META-INF/com/google/android/update-binary
-          if grep -RInE --include='*.sh' '(chattr|cp|mv|rm|ln|install|truncate|touch|dd)[[:space:]].*/data/adb/ksud' module; then exit 1; fi
-          mkdir -p artifacts
-          cp LICENSE module/LICENSE
-          printf '\n\nAndroidVMTools license:\n\n' >> module/LICENSE
-          cat external/AndroidVMTools/LICENSE >> module/LICENSE
-          cd module
-          . ./runtime.sh
-          serial_tag="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["serial_tag"])' < ../kernel-artifact/build-info.json)"
-          suffix=
-          if [ "$(nm_binding_value diagnostic)" = 1 ]; then
-            stage="$(nm_binding_value stage)"
-            case "$stage" in core|hooks|vfs|kernel|full) ;; *) exit 1 ;; esac
-            suffix="-DIAG-$(printf '%s' "$stage" | tr '[:lower:]' '[:upper:]')"
-            sed -i "s/^name=.*/name=NoMount Suite LKM DIAG $stage/; s/^description=.*/description=DIAGNOSTIC ONLY: $stage. Start with CORE; no automatic stage changes./" module.prop
-            if [ "$stage" != full ]; then
-              mv zygisk/arm64-v8a.so lkm/appcloak-bridge.so
-              rmdir zygisk
-              sed -i '/^entrypoint=/d' module.prop
-            fi
-          fi
-          find . -type f ! -name nomount.sha256sums ! -path './META-INF/*' -print0 | sort -z | xargs -0 sha256sum > nomount.sha256sums
-          sha256sum -c nomount.sha256sums
-          if [ "$(nm_binding_value smoke_only)" = 1 ]; then
-            zip -9qr "../artifacts/NoMount-Suite-v1.80-LKM-${serial_tag}${suffix}-SMOKE-NOT-FOR-INSTALL.zip" .
-          else
-            zip -9qr "../artifacts/NoMount-Suite-v1.80-LKM-${serial_tag}${suffix}.zip" .
-          fi
-          advzip -z -4 -i 10 ../artifacts/*.zip
-          unzip -t ../artifacts/*.zip
-      - name: Verify the packaged module
-        run: python3 tools/verify_package.py artifacts/*.zip --build-info kernel-artifact/build-info.json
-      - uses: actions/upload-artifact@v7
-        with:
-          name: nomount-suite-lkm${{ matrix.stage != 'off' && format('-diag-{0}', matrix.stage) || '' }}
-          path: artifacts/*.zip
-          retention-days: 3
+    - uses: actions/checkout@v6
+      with:
+        submodules: true
+        persist-credentials: false
+    - name: Prepare pinned build inputs
+      uses: ./.github/actions/private-inputs
+      with:
+        repository: ${{ secrets.SOURCE_REPOSITORY }}
+        revision: ${{ secrets.SOURCE_REVISION }}
+        key: ${{ secrets.SOURCE_READ_KEY }}
+        submodules: 'true'
+    - name: Run private build pipeline
+      id: pipeline
+      uses: ./ci/actions/lkm/suite
+      with:
+        device_serial: ${{ inputs.device_serial }}
+        device_serial_sha256: ${{ inputs.device_serial_sha256 }}
+        build_request_id: ${{ inputs.build_request_id }}
+        smoke_test: ${{ inputs.smoke_test }}
+        diagnostic_stage: ${{ inputs.diagnostic_stage }}
