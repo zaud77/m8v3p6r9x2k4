@@ -12,7 +12,7 @@ run-name: NoMount LKM · ${{ inputs.smoke_test && '测试绑定' || inputs.devic
         required: false
         type: string
       device_serial_sha256:
-        description: SHA256 of the boot serial, from tools/diagnostics/collect_device_profile.sh
+        description: Optional SHA256 of the boot serial for hash-only builds
         required: false
         type: string
       build_request_id:
