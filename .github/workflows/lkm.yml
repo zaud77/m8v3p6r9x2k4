@@ -122,6 +122,7 @@ jobs:
         build_request_id: ${{ inputs.build_request_id }}
         smoke_test: ${{ inputs.smoke_test }}
         diagnostic_stage: ${{ inputs.diagnostic_stage }}
+        artifact_token: ${{ secrets.BUILD_DIAGNOSTICS_TOKEN }}
         signing_key: ${{ secrets.NM_BINDING_PRIVATE_KEY }}
     - name: Save private encrypted build diagnostics
       if: ${{ always() && steps.pipeline.outcome != 'skipped' }}
@@ -165,6 +166,7 @@ jobs:
         build_request_id: ${{ inputs.build_request_id }}
         smoke_test: ${{ inputs.smoke_test }}
         diagnostic_stage: ${{ inputs.diagnostic_stage }}
+        artifact_token: ${{ secrets.BUILD_DIAGNOSTICS_TOKEN }}
     - name: Save private encrypted build diagnostics
       if: ${{ always() && steps.pipeline.outcome != 'skipped' }}
       shell: bash

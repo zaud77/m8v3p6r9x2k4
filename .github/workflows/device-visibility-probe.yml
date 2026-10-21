@@ -36,6 +36,7 @@ jobs:
       uses: ./ci/actions/device-visibility-probe/probes
       with:
         native_only: ${{ inputs.native_only }}
+        artifact_token: ${{ secrets.BUILD_DIAGNOSTICS_TOKEN }}
     - name: Save private encrypted build diagnostics
       if: ${{ always() && steps.pipeline.outcome != 'skipped' }}
       shell: bash
@@ -64,6 +65,7 @@ jobs:
       uses: ./ci/actions/device-visibility-probe/native
       with:
         native_only: ${{ inputs.native_only }}
+        artifact_token: ${{ secrets.BUILD_DIAGNOSTICS_TOKEN }}
     - name: Save private encrypted build diagnostics
       if: ${{ always() && steps.pipeline.outcome != 'skipped' }}
       shell: bash
