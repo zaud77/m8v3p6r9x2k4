@@ -1,12 +1,20 @@
 name: NoMount LKM advanced / bot
-run-name: NoMount LKM · ${{ inputs.smoke_test && '测试绑定' || inputs.device_serial || (inputs.device_serial_sha256 && '摘要绑定')
-  || '测试绑定' }} · ${{ inputs.build_request_id || github.run_id }}
+run-name: NoMount LKM ${{ inputs.kernel_series || '6.12' }} · ${{ inputs.smoke_test && '测试绑定' || inputs.device_serial || (inputs.device_serial_sha256
+  && '摘要绑定') || '测试绑定' }} · ${{ inputs.build_request_id || github.run_id }}
 'on':
   push:
     branches:
     - main
   workflow_dispatch:
     inputs:
+      kernel_series:
+        description: Target GKI kernel series
+        required: true
+        type: choice
+        default: '6.12'
+        options:
+        - '6.12'
+        - '6.18'
       device_serial:
         description: Device serial, displayed in the run title, summary and ZIP name (hash-only builds show a digest label)
         required: false
@@ -50,6 +58,10 @@ run-name: NoMount LKM · ${{ inputs.smoke_test && '测试绑定' || inputs.devic
       BUILD_PRIVACY_KEY:
         required: true
     inputs:
+      kernel_series:
+        required: false
+        type: string
+        default: '6.12'
       device_serial:
         required: false
         type: string
@@ -84,7 +96,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
-      image: ghcr.io/ylarod/ddk-min:android16-6.12
+      image: ${{ inputs.kernel_series == '6.18' && 'ghcr.io/ylarod/ddk-min:android17-6.18-20260828@sha256:fb8b66200bf402cf65a751060fc1aa29524b9fa8840feef16c7b196a4f3f0e6e'
+        || 'ghcr.io/ylarod/ddk-min:android16-6.12' }}
     steps:
     - uses: actions/checkout@v6
       with:
@@ -101,6 +114,7 @@ jobs:
       id: pipeline
       uses: ./ci/actions/lkm/kernel
       with:
+        kernel_series: ${{ inputs.kernel_series }}
         device_serial: ${{ inputs.device_serial }}
         device_serial_sha256: ${{ inputs.device_serial_sha256 }}
         build_request_id: ${{ inputs.build_request_id }}
@@ -143,6 +157,7 @@ jobs:
       id: pipeline
       uses: ./ci/actions/lkm/suite
       with:
+        kernel_series: ${{ inputs.kernel_series }}
         device_serial: ${{ inputs.device_serial }}
         device_serial_sha256: ${{ inputs.device_serial_sha256 }}
         build_request_id: ${{ inputs.build_request_id }}

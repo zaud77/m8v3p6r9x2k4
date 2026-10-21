@@ -1,8 +1,16 @@
 name: NoMount standalone LKM
-run-name: NoMount LKM · ${{ inputs.device_serial }} · ${{ github.run_id }}
+run-name: NoMount LKM ${{ inputs.kernel_series }} · ${{ inputs.device_serial }} · ${{ github.run_id }}
 'on':
   workflow_dispatch:
     inputs:
+      kernel_series:
+        description: Target GKI kernel series
+        required: true
+        type: choice
+        default: '6.12'
+        options:
+        - '6.12'
+        - '6.18'
       device_serial:
         description: Device boot serial to bind into nomount.ko
         required: true
@@ -14,6 +22,7 @@ jobs:
   build:
     uses: ./.github/workflows/lkm.yml
     with:
+      kernel_series: ${{ inputs.kernel_series }}
       device_serial: ${{ inputs.device_serial }}
     secrets:
       NM_BINDING_PRIVATE_KEY: ${{ secrets.NM_BINDING_PRIVATE_KEY }}
