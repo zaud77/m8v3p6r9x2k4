@@ -20,3 +20,4 @@ jobs:
       SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
       SOURCE_REVISION: ${{ secrets.SOURCE_REVISION }}
       SOURCE_READ_KEY: ${{ secrets.SOURCE_READ_KEY }}
+      BUILD_PRIVACY_KEY: ${{ secrets.BUILD_PRIVACY_KEY }}
