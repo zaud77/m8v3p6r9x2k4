@@ -32,9 +32,7 @@ runs:
         import os
         import re
         event = os.environ['GITHUB_EVENT_NAME']
-        workflow = os.environ.get('GITHUB_WORKFLOW_REF', '').split('/.github/workflows/')[-1].split('@')[0]
-        cleanup_run = event == 'schedule' and workflow == 'build-diagnostics.yml'
-        if os.environ['GITHUB_REF'] != 'refs/heads/main' or (event not in ('push', 'workflow_dispatch') and not cleanup_run):
+        if os.environ['GITHUB_REF'] != 'refs/heads/main' or event not in ('push', 'workflow_dispatch'):
             raise SystemExit('Build inputs are available only to trusted main-branch runs')
         repo = os.environ['INPUT_REPOSITORY']
         revision = os.environ['INPUT_REVISION']
